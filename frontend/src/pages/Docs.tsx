@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 const SECTIONS = [
   {
     title: "Getting started",
-    content: `Sign in with your email — no password needed. You'll get a magic link. Once signed in, you get 3 free conversions per day.`,
+    content: `No sign-in required. Just open the app, drop a screenshot, pick your output format, and hit Convert. That's it.`,
   },
   {
     title: "Supported input",
@@ -11,7 +11,11 @@ const SECTIONS = [
   },
   {
     title: "Output formats",
-    content: `Squint outputs a single React functional component with Tailwind CSS. The component is self-contained and immediately renderable — just paste it into your project.`,
+    content: `Choose from four output formats:\n• HTML — plain semantic HTML with inline styles\n• Tailwind — HTML with Tailwind CSS utility classes\n• React — a functional component with Tailwind\n• Vue 3 — a single-file component with Tailwind`,
+  },
+  {
+    title: "How it works",
+    content: `Squint runs a 4-agent AI pipeline powered by CrewAI:\n1. UI Analyst — reads the screenshot and describes the layout\n2. Architect — plans the component structure and spacing\n3. Generator — writes the actual code\n4. Polisher — cleans up and removes artifacts\n\nYou can watch the agents work in real time in the activity panel.`,
   },
   {
     title: "Quality tips",
@@ -19,11 +23,7 @@ const SECTIONS = [
   },
   {
     title: "Known limitations",
-    content: `• Chart and graph rendering is not supported — the model outputs placeholders.\n• Custom fonts are matched to the closest system or Google Font.\n• Animated elements are output as static code.\n• EU users: Llama 4 Scout is not licensed for use in the EU under Llama 4's usage policy.`,
-  },
-  {
-    title: "Free vs Pro",
-    content: `Free: 3 conversions per day.\nPro ($9/mo): 200 conversions per month, priority processing.`,
+    content: `• Chart and graph rendering is not supported — the model outputs placeholders.\n• Custom fonts are matched to the closest system or Google Font.\n• Animated elements are output as static code.\n• Free-tier AI models may occasionally produce imperfect output — re-running often helps.`,
   },
 ];
 
