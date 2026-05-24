@@ -110,7 +110,7 @@ export async function convertScreenshot(
         "type" in parsed &&
         (parsed as { type: string }).type === "result"
       ) {
-        const inner = JSON.parse((parsed as { content: string }).content);
+        const inner = JSON.parse((parsed as unknown as { content: string }).content);
         result = { code: inner.code, remaining: inner.remaining };
         continue;
       }
