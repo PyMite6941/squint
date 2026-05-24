@@ -7,48 +7,24 @@ import os
 import re
 import time
 import asyncio
-import hashlib
-import hmac
-from datetime import date
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Header, HTTPException, Request, Query
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from crew import SquintCrew
-from supabase_client import (
-    get_user_from_jwt,
-    get_or_create_user_row,
-    check_and_consume,
-    save_conversion,
-    upgrade_user,
-    downgrade_user,
-    flag_payment_failed,
-    get_client as get_supabase,
-    FREE_DAILY_LIMIT,
-    PAID_MONTHLY_LIMIT,
-)
+
 ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 ALLOWED_MIME = {"image/png", "image/jpeg", "image/webp", "image/gif"}
 MAX_B64_SIZE = 5 * 1024 * 1024 * 4 // 3
 MAX_RUNTIME = 600
-LEMON_SECRET = os.environ.get("LEMON_WEBHOOK_SECRET", "")
 
-# Rate limiting is optional — if Upstash env vars aren't set, skip it.
-_UPSTASH_CONFIGURED = bool(os.environ.get("UPSTASH_REDIS_REST_URL"))
-if _UPSTASH_CONFIGURED:
-    from ratelimit import check_rate_limit
-else:
-    def check_rate_limit(_user_id: str) -> bool:
-        return True
-
-# CORS: comma-separated list in ALLOWED_ORIGINS env var, or fallback to dev defaults.
 _raw_origins = os.environ.get(
     "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://localhost:4173,https://squint.app",
+    "http://localhost:5173,http://localhost:4173",
 )
 _CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
@@ -89,38 +65,17 @@ class ConvertRequest(BaseModel):
     framework: str = "react"
 
 
-def _extract_jwt(authorization: str) -> str:
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Missing bearer token.")
-    return authorization.removeprefix("Bearer ").strip()
-
-
 @app.get("/health")
 def health():
     return {"ok": True}
 
 
 @app.post("/convert")
-async def convert(body: ConvertRequest, authorization: str = Header(...)):
-    jwt = _extract_jwt(authorization)
-    try:
-        auth_user = get_user_from_jwt(jwt)
-    except ValueError:
-        raise HTTPException(401, "Invalid or expired token.")
-
-    user_id = str(auth_user.id)
-    email = auth_user.email or ""
-
+async def convert(body: ConvertRequest):
     if body.mime_type not in ALLOWED_MIME:
         raise HTTPException(400, "Unsupported image type.")
     if len(body.image_b64) > MAX_B64_SIZE:
         raise HTTPException(400, "Image too large (max 5 MB).")
-    if not check_rate_limit(user_id):
-        raise HTTPException(429, "Too many requests. Slow down.")
-
-    allowed, remaining = check_and_consume(user_id, email)
-    if not allowed:
-        raise HTTPException(402, "Conversion limit reached. Upgrade to Pro.")
 
     async def event_stream():
         q: queue.Queue = queue.Queue()
@@ -133,8 +88,7 @@ async def convert(body: ConvertRequest, authorization: str = Header(...)):
             try:
                 crew = SquintCrew(body.image_b64, body.mime_type, body.framework)
                 code = crew.run()
-                save_conversion(user_id, body.framework, code)
-                q.put({"__result__": json.dumps({"code": code, "remaining": remaining})})
+                q.put({"__result__": json.dumps({"code": code})})
             except Exception as exc:
                 capture.flush()
                 import traceback
@@ -156,7 +110,7 @@ async def convert(body: ConvertRequest, authorization: str = Header(...)):
         while True:
             left = deadline - time.monotonic()
             if left <= 0:
-                yield f"data: {json.dumps('[ERROR] Analysis timed out.')}\n\n"
+                yield f"data: {json.dumps('[ERROR] Timed out.')}\n\n"
                 yield f"data: {json.dumps('__DONE__')}\n\n"
                 break
             try:
@@ -177,73 +131,3 @@ async def convert(body: ConvertRequest, authorization: str = Header(...)):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
-
-
-@app.get("/usage")
-async def usage(authorization: str = Header(...)):
-    jwt = _extract_jwt(authorization)
-    try:
-        auth_user = get_user_from_jwt(jwt)
-    except ValueError:
-        raise HTTPException(401, "Invalid or expired token.")
-
-    row = get_or_create_user_row(str(auth_user.id), auth_user.email or "")
-    tier = row["tier"]
-    today = str(date.today())
-
-    if tier == "paid":
-        used = row["monthly_conversions_used"]
-        limit = PAID_MONTHLY_LIMIT
-    else:
-        last_date = row.get("last_conversion_date")
-        used = row["daily_conversions_used"] if last_date == today else 0
-        limit = FREE_DAILY_LIMIT
-
-    return JSONResponse({"tier": tier, "used": used, "limit": limit, "remaining": max(0, limit - used)})
-
-
-@app.get("/history")
-async def get_history(authorization: str = Header(...), limit: int = Query(20, ge=1, le=50)):
-    jwt = _extract_jwt(authorization)
-    try:
-        auth_user = get_user_from_jwt(jwt)
-    except ValueError:
-        raise HTTPException(401, "Invalid or expired token.")
-
-    result = (
-        get_supabase()
-        .table("conversions")
-        .select("id, framework, code, created_at")
-        .eq("user_id", str(auth_user.id))
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return JSONResponse({"history": result.data})
-
-
-@app.post("/webhook/lemon")
-async def lemon_webhook(request: Request, x_signature: str = Header(alias="X-Signature")):
-    body = await request.body()
-    if LEMON_SECRET:
-        expected = hmac.new(LEMON_SECRET.encode(), body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, x_signature):
-            raise HTTPException(401, "Invalid signature.")
-
-    payload = json.loads(body)
-    event = payload.get("meta", {}).get("event_name", "")
-    attrs = payload.get("data", {}).get("attributes", {})
-    email = attrs.get("user_email", "")
-    subscription_id = str(payload.get("data", {}).get("id", ""))
-
-    if event in ("order_created", "subscription_created", "subscription_resumed"):
-        if email:
-            upgrade_user(email, subscription_id)
-    elif event == "subscription_cancelled":
-        if subscription_id:
-            downgrade_user(subscription_id)
-    elif event == "subscription_payment_failed":
-        if subscription_id:
-            flag_payment_failed(subscription_id)
-
-    return {"ok": True}
