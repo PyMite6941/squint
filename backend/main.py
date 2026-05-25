@@ -72,24 +72,19 @@ def _get_month() -> str:
     return time.strftime("%Y-%m")
 
 
-def _free_remaining(ip: str) -> int:
+def _try_consume_free(ip: str) -> bool:
+    """Atomically checks and consumes one free slot. Returns False if limit reached."""
     month = _get_month()
     with _ip_lock:
         rec = _ip_usage.get(ip, {"month": "", "count": 0})
         if rec["month"] != month:
             rec = {"month": month, "count": 0}
+        if rec["count"] >= FREE_LIMIT:
             _ip_usage[ip] = rec
-        return max(0, FREE_LIMIT - rec["count"])
-
-
-def _consume_free(ip: str) -> None:
-    month = _get_month()
-    with _ip_lock:
-        rec = _ip_usage.get(ip, {"month": "", "count": 0})
-        if rec["month"] != month:
-            rec = {"month": month, "count": 0}
+            return False
         rec["count"] += 1
         _ip_usage[ip] = rec
+        return True
 
 
 def _mint_token(tx_hash: str) -> str:
@@ -102,7 +97,7 @@ def _redeem_token(token: str) -> str | None:
     """Verifies HMAC + expiry. Returns tx_hash if valid, None otherwise."""
     try:
         encoded, sig = token.rsplit(".", 1)
-        payload = base64.urlsafe_b64decode(encoded + "==").decode()
+        payload = base64.urlsafe_b64decode(encoded).decode()
         expected = hmac.new(PAYMENT_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
@@ -222,9 +217,8 @@ async def convert(
                 _used_tx_hashes.add(tx_hash)
         else:
             client_ip = _get_client_ip(request)
-            if _free_remaining(client_ip) <= 0:
+            if not _try_consume_free(client_ip):
                 raise HTTPException(402, "Free limit reached. Payment required.")
-            _consume_free(client_ip)
 
     async def event_stream():
         q: queue.Queue = queue.Queue()

@@ -46,6 +46,11 @@ export async function sendPayment(onStatus: (s: string) => void): Promise<string
           blockExplorerUrls: ["https://basescan.org"],
         }],
       });
+      // Some MetaMask versions don't auto-switch after add; explicit switch as fallback
+      await eth.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: BASE_CHAIN_ID }],
+      }).catch(() => {});
     } else {
       throw err;
     }
@@ -78,7 +83,9 @@ export async function verifyPayment(txHash: string): Promise<string> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || "Payment verification failed.");
+    let message = text;
+    try { message = (JSON.parse(text) as { detail?: string }).detail ?? text; } catch {}
+    throw new Error(message || "Payment verification failed.");
   }
   const data = await res.json();
   return data.token as string;

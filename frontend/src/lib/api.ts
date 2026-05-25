@@ -41,7 +41,9 @@ export async function convertScreenshot(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new ConvertError(text || "Conversion failed.");
+    let message = text;
+    try { message = (JSON.parse(text) as { detail?: string }).detail ?? text; } catch {}
+    throw new ConvertError(message || "Conversion failed.");
   }
 
   const reader = res.body!.getReader();
