@@ -1,10 +1,11 @@
 import { useState, useCallback, lazy, Suspense } from "react";
 import { Link } from "react-router-dom";
-import { Loader2, Wand2 } from "lucide-react";
+import { Loader2, Wand2, Wallet } from "lucide-react";
 import UploadZone from "../components/UploadZone";
 import FrameworkPicker from "../components/FrameworkPicker";
 import AgentStream from "../components/AgentStream";
 import { convertScreenshot, ConvertError, type Framework } from "../lib/api";
+import { getFreeUsed, incrementFreeUsed, sendPayment, FREE_LIMIT } from "../lib/wallet";
 const CodeViewer = lazy(() => import("../components/CodeViewer"));
 
 export default function AppPage() {
@@ -15,33 +16,67 @@ export default function AppPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [freeUsed, setFreeUsed] = useState(() => getFreeUsed());
+  const [paying, setPaying] = useState(false);
+  const [payStatus, setPayStatus] = useState<string | null>(null);
+  const [payError, setPayError] = useState<string | null>(null);
 
   const handleFile = useCallback((f: File) => {
     setFile(f);
     setCode(null);
     setError(null);
+    setPayError(null);
     setLogs([]);
     setPreview(URL.createObjectURL(f));
   }, []);
 
-  const handleConvert = async () => {
-    if (!file) return;
+  const doConvert = async (): Promise<boolean> => {
     setLoading(true);
     setError(null);
     setCode(null);
     setLogs([]);
-
     try {
-      const result = await convertScreenshot(file, framework, (line) =>
+      const result = await convertScreenshot(file!, framework, (line) =>
         setLogs((prev) => [...prev, line])
       );
       setCode(result.code);
+      return true;
     } catch (err) {
       setError(err instanceof ConvertError ? err.message : "Something went wrong.");
+      return false;
     } finally {
       setLoading(false);
     }
   };
+
+  const handleConvert = async () => {
+    if (!file) return;
+    const ok = await doConvert();
+    if (ok) {
+      incrementFreeUsed();
+      setFreeUsed(getFreeUsed());
+    }
+  };
+
+  const handlePayAndConvert = async () => {
+    if (!file) return;
+    setPaying(true);
+    setPayError(null);
+    try {
+      await sendPayment((status) => setPayStatus(status));
+      setPayStatus(null);
+      await doConvert();
+    } catch (err) {
+      setPayError(err instanceof Error ? err.message : "Payment failed.");
+    } finally {
+      setPaying(false);
+      setPayStatus(null);
+    }
+  };
+
+  const freeLeft = FREE_LIMIT - freeUsed;
+  const needsPayment = freeLeft <= 0;
+  const busy = loading || paying;
 
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col">
@@ -66,7 +101,7 @@ export default function AppPage() {
             <p className="text-xs text-gray-500 mt-0.5">Drop any UI and get clean code back.</p>
           </div>
 
-          <UploadZone onFile={handleFile} preview={preview} disabled={loading} />
+          <UploadZone onFile={handleFile} preview={preview} disabled={busy} />
 
           <div>
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Output format</p>
@@ -79,15 +114,64 @@ export default function AppPage() {
             </div>
           )}
 
-          <button
-            onClick={handleConvert}
-            disabled={!file || loading}
-            className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all shadow-lg shadow-brand-500/20 mt-auto"
-          >
-            {loading
-              ? <><Loader2 className="w-4 h-4 animate-spin" /> Converting…</>
-              : <><Wand2 className="w-4 h-4" /> Convert to code</>}
-          </button>
+          {payError && (
+            <div className="px-3 py-2.5 rounded-lg bg-red-950/40 border border-red-900/50 text-xs text-red-400">
+              {payError}
+            </div>
+          )}
+
+          <div className="mt-auto flex flex-col gap-3">
+            {/* Free usage meter */}
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-xs text-gray-600">
+                <span>Free this month</span>
+                <span className={freeLeft === 0 ? "text-red-500/70" : "text-gray-500"}>
+                  {freeUsed}/{FREE_LIMIT} used
+                </span>
+              </div>
+              <div className="flex gap-1">
+                {Array.from({ length: FREE_LIMIT }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`h-1 flex-1 rounded-full transition-colors ${
+                      i < freeUsed ? "bg-brand-500/70" : "bg-gray-800"
+                    }`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {needsPayment ? (
+              <>
+                <div className="px-3 py-2 rounded-lg bg-gray-900 border border-gray-800 text-xs text-gray-500 text-center leading-relaxed">
+                  Free limit reached · <span className="text-gray-400">0.002 ETH ≈ $5</span> per conversion on Base
+                </div>
+                <button
+                  onClick={handlePayAndConvert}
+                  disabled={!file || busy}
+                  className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all shadow-lg shadow-brand-500/20"
+                >
+                  {paying ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> {payStatus ?? "Processing…"}</>
+                  ) : loading ? (
+                    <><Loader2 className="w-4 h-4 animate-spin" /> Converting…</>
+                  ) : (
+                    <><Wallet className="w-4 h-4" /> Pay & Convert</>
+                  )}
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={handleConvert}
+                disabled={!file || busy}
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:opacity-40 disabled:cursor-not-allowed text-white font-semibold text-sm transition-all shadow-lg shadow-brand-500/20"
+              >
+                {loading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Converting…</>
+                  : <><Wand2 className="w-4 h-4" /> Convert to code</>}
+              </button>
+            )}
+          </div>
         </aside>
 
         {/* Center — agent stream */}
