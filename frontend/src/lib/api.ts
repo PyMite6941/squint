@@ -26,12 +26,16 @@ export async function convertScreenshot(
   file: File,
   framework: Framework,
   onLog: (line: string) => void,
+  paymentToken?: string,
 ): Promise<ConvertResult> {
   const image_b64 = await fileToBase64(file);
 
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (paymentToken) headers["X-Payment-Token"] = paymentToken;
+
   const res = await fetch(`${BASE}/convert`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ image_b64, mime_type: file.type, framework }),
   });
 

@@ -2,6 +2,7 @@ declare global {
   interface Window { ethereum?: any }
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? "/api").replace(/\/$/, "");
 const RECIPIENT = "0x8069408a17B77895cb7Cd0B0D804aB46f59Bc4c3";
 const BASE_CHAIN_ID = "0x2105"; // 8453
 const PRICE_WEI = "0x71AFD498D0000"; // 0.002 ETH ≈ $5
@@ -67,4 +68,18 @@ export async function sendPayment(onStatus: (s: string) => void): Promise<string
     if (receipt?.status === "0x0") throw new Error("Transaction failed on-chain.");
   }
   throw new Error("Transaction not confirmed after 3 minutes.");
+}
+
+export async function verifyPayment(txHash: string): Promise<string> {
+  const res = await fetch(`${API_BASE}/verify-payment`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tx_hash: txHash }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Payment verification failed.");
+  }
+  const data = await res.json();
+  return data.token as string;
 }

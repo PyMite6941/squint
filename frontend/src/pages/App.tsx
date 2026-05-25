@@ -5,7 +5,7 @@ import UploadZone from "../components/UploadZone";
 import FrameworkPicker from "../components/FrameworkPicker";
 import AgentStream from "../components/AgentStream";
 import { convertScreenshot, ConvertError, type Framework } from "../lib/api";
-import { getFreeUsed, incrementFreeUsed, sendPayment, FREE_LIMIT } from "../lib/wallet";
+import { getFreeUsed, incrementFreeUsed, sendPayment, verifyPayment, FREE_LIMIT } from "../lib/wallet";
 const CodeViewer = lazy(() => import("../components/CodeViewer"));
 
 export default function AppPage() {
@@ -30,14 +30,16 @@ export default function AppPage() {
     setPreview(URL.createObjectURL(f));
   }, []);
 
-  const doConvert = async (): Promise<boolean> => {
+  const doConvert = async (paymentToken?: string): Promise<boolean> => {
     setLoading(true);
     setError(null);
     setCode(null);
     setLogs([]);
     try {
-      const result = await convertScreenshot(file!, framework, (line) =>
-        setLogs((prev) => [...prev, line])
+      const result = await convertScreenshot(
+        file!, framework,
+        (line) => setLogs((prev) => [...prev, line]),
+        paymentToken,
       );
       setCode(result.code);
       return true;
@@ -63,9 +65,11 @@ export default function AppPage() {
     setPaying(true);
     setPayError(null);
     try {
-      await sendPayment((status) => setPayStatus(status));
+      const txHash = await sendPayment((status) => setPayStatus(status));
+      setPayStatus("Verifying payment…");
+      const token = await verifyPayment(txHash);
       setPayStatus(null);
-      await doConvert();
+      await doConvert(token);
     } catch (err) {
       setPayError(err instanceof Error ? err.message : "Payment failed.");
     } finally {
