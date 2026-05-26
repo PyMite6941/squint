@@ -33,7 +33,10 @@ RECIPIENT     = "0x8069408a17b77895cb7cd0b0d804ab46f59bc4c3"  # lowercase for co
 PRICE_WEI_MIN = int(1.98e15)  # 0.00198 ETH — 1% slippage tolerance on 0.002 ETH
 
 # ── Config ────────────────────────────────────────────────────────────────────
-_raw_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:4173")
+_raw_origins = os.environ.get(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://localhost:4173,https://squint-ten.vercel.app",
+)
 _CORS_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 PAYMENT_SECRET  = os.environ.get("PAYMENT_SECRET", "")
